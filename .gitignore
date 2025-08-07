@@ -1,0 +1,5 @@
+# Python Temporary Files
+__pycache__
+
+# PyCharm IDE
+.idea
