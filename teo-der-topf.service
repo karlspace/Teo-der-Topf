@@ -1,0 +1,51 @@
+[Unit]
+Description=Teo der Topf Interactive Learning Companion
+Documentation=https://github.com/karlspace/Teo-der-Topf
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=iot
+Group=iot
+WorkingDirectory=/home/iot
+Environment=PYTHONPATH=/home/iot
+Environment=VIRTUAL_ENV=/home/iot/venv
+Environment=PATH=/home/iot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONUNBUFFERED=1
+
+# Pre-start: Setup virtual environment and install dependencies
+ExecStartPre=/bin/bash -c 'cd /home/iot && [ -d venv ] || python3 -m venv venv --system-site-packages'
+ExecStartPre=/bin/bash -c 'cd /home/iot && venv/bin/pip install --upgrade pip'
+ExecStartPre=/bin/bash -c 'cd /home/iot && venv/bin/pip install -r requirements.txt'
+
+# Main application
+ExecStart=/home/iot/venv/bin/python3 /home/iot/main.py
+
+# Restart policy for robust operation
+Restart=always
+RestartSec=10
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+# Process management
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=teo-der-topf
+
+# Security and resource limits
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/iot
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

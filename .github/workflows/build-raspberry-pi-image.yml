@@ -1,0 +1,466 @@
+name: Build Raspberry Pi Image for Teo der Topf
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: 'Enable debug mode'
+        required: false
+        default: 'false'
+        type: boolean
+      custom_version:
+        description: 'Custom version (leave empty for auto-detection)'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+
+env:
+  IMAGE_NAME: teo-der-topf
+  PI_OS_VERSION: 2024-03-15-raspios-bookworm-armhf-lite
+  
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          qemu-user-static \
+          binfmt-support \
+          fdisk \
+          wget \
+          curl \
+          xz-utils \
+          zip \
+          unzip \
+          kpartx \
+          parted \
+          zerofree
+    
+    - name: Extract version information
+      id: version
+      run: |
+        if [ -n "${{ inputs.custom_version }}" ]; then
+          VERSION="${{ inputs.custom_version }}"
+        else
+          VERSION=$(python3 -c "exec(open('version.py').read()); print(__version__)")
+        fi
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "image_name=${IMAGE_NAME}-${VERSION}" >> $GITHUB_OUTPUT
+        echo "build_date=$(date -u +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+        echo "git_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+    
+    - name: Create build directory
+      run: |
+        mkdir -p build/{image,scripts,config}
+        echo "Build directory created for version ${{ steps.version.outputs.version }}"
+    
+    - name: Download Raspberry Pi OS base image
+      run: |
+        cd build/image
+        wget -O raspios-lite.img.xz "https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2024-03-15/${PI_OS_VERSION}.img.xz"
+        xz -d raspios-lite.img.xz
+        mv ${PI_OS_VERSION}.img raspios-lite.img
+    
+    - name: Create image customization scripts
+      run: |
+        # Create the main setup script
+        cat > build/scripts/setup_image.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        MOUNT_BOOT="$1"
+        MOUNT_ROOT="$2"
+        DEBUG_MODE="$3"
+        
+        echo "=== Setting up Teo der Topf Application ==="
+        
+        # Enable hardware interfaces in config.txt
+        echo "dtparam=spi=on" >> "${MOUNT_BOOT}/config.txt"
+        echo "dtparam=i2c_arm=on" >> "${MOUNT_BOOT}/config.txt"
+        echo "dtparam=i2s=on" >> "${MOUNT_BOOT}/config.txt"
+        echo "enable_uart=1" >> "${MOUNT_BOOT}/config.txt"
+        echo "gpu_mem=128" >> "${MOUNT_BOOT}/config.txt"
+        
+        # Copy application files
+        cp -r /workspace/* "${MOUNT_ROOT}/home/iot/"
+        chown -R 1000:1000 "${MOUNT_ROOT}/home/iot/"
+        
+        # Create systemd service
+        cat > "${MOUNT_ROOT}/etc/systemd/system/teo-der-topf.service" << 'SYSTEMD_EOF'
+        [Unit]
+        Description=Teo der Topf Interactive Learning Companion
+        After=network.target
+        Wants=network.target
+        
+        [Service]
+        Type=simple
+        User=iot
+        Group=iot
+        WorkingDirectory=/home/iot
+        Environment=PYTHONPATH=/home/iot
+        Environment=VIRTUAL_ENV=/home/iot/venv
+        Environment=PATH=/home/iot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        ExecStartPre=/bin/bash -c 'cd /home/iot && python3 -m venv venv --system-site-packages && venv/bin/pip install --upgrade pip && venv/bin/pip install -r requirements.txt'
+        ExecStart=/home/iot/venv/bin/python3 /home/iot/main.py
+        Restart=always
+        RestartSec=10
+        StandardOutput=journal
+        StandardError=journal
+        
+        [Install]
+        WantedBy=multi-user.target
+        SYSTEMD_EOF
+        
+        # Enable the service
+        chroot "${MOUNT_ROOT}" systemctl enable teo-der-topf.service
+        
+        # Install required packages
+        echo "Installing required packages..."
+        chroot "${MOUNT_ROOT}" apt-get update
+        chroot "${MOUNT_ROOT}" apt-get install -y \
+          python3 \
+          python3-pip \
+          python3-venv \
+          python3-pil \
+          fonts-dejavu \
+          i2c-tools \
+          libopenjp2-7 \
+          git \
+          vim \
+          mc
+        
+        # Create default user if it doesn't exist
+        if ! chroot "${MOUNT_ROOT}" id iot &>/dev/null; then
+          chroot "${MOUNT_ROOT}" useradd -m -s /bin/bash iot
+          echo "iot:iot2023!" | chroot "${MOUNT_ROOT}" chpasswd
+          chroot "${MOUNT_ROOT}" usermod -aG sudo,spi,i2c,gpio iot
+        fi
+        
+        # Create Pi Imager firstrun.sh for advanced options support
+        cat > "${MOUNT_BOOT}/firstrun.sh" << 'FIRSTRUN_EOF'
+        #!/bin/bash
+        
+        set +e
+        
+        CURRENT_HOSTNAME=`cat /etc/hostname | tr -d " \t\n\r"`
+        if [ -f /usr/lib/raspberrypi-sys-mods/imager_custom ]; then
+          /usr/lib/raspberrypi-sys-mods/imager_custom enable_ssh
+        fi
+        
+        # Check for userconf.txt (Pi Imager user setup)
+        if [ -f /boot/userconf.txt ] || [ -f /boot/firmware/userconf.txt ]; then
+          echo "Pi Imager user configuration detected"
+        else
+          # Fallback to default user
+          echo "No Pi Imager user config found, using default user 'iot'"
+          if ! id iot &>/dev/null; then
+            useradd -m -s /bin/bash iot
+            echo "iot:iot2023!" | chpasswd
+            usermod -aG sudo,spi,i2c,gpio iot
+          fi
+        fi
+        
+        # Enable SSH by default
+        systemctl enable ssh
+        
+        # Start our application service
+        systemctl enable teo-der-topf.service
+        
+        rm -f /boot/firstrun.sh
+        sed -i 's| systemd.run.*||g' /boot/cmdline.txt
+        exit 0
+        FIRSTRUN_EOF
+        
+        chmod +x "${MOUNT_BOOT}/firstrun.sh"
+        
+        # Modify cmdline.txt to run firstrun.sh
+        sed -i '1s/$/ systemd.run=\/boot\/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target/' "${MOUNT_BOOT}/cmdline.txt"
+        
+        # Create build info file
+        cat > "${MOUNT_ROOT}/home/iot/build_info.txt" << BUILD_INFO_EOF
+        Teo der Topf - Raspberry Pi Image
+        Build Date: $(date -u)
+        Version: ${{ steps.version.outputs.version }}
+        Git Hash: ${{ steps.version.outputs.git_hash }}
+        Base Image: ${PI_OS_VERSION}
+        Builder: GitHub Actions
+        
+        Default Credentials (if not set via Pi Imager):
+        Username: iot
+        Password: iot2023!
+        
+        Hardware Configuration:
+        - SPI: Enabled
+        - I2C: Enabled  
+        - UART: Enabled
+        - I2S: Enabled
+        - GPU Memory: 128MB
+        
+        Services:
+        - SSH: Enabled
+        - Teo der Topf: Enabled (systemd)
+        
+        For more information, see README.MD
+        BUILD_INFO_EOF
+        
+        chown 1000:1000 "${MOUNT_ROOT}/home/iot/build_info.txt"
+        
+        echo "=== Image setup completed ==="
+        EOF
+        
+        chmod +x build/scripts/setup_image.sh
+    
+    - name: Customize Raspberry Pi image
+      run: |
+        cd build/image
+        
+        # Get image info
+        IMAGE_SIZE=$(stat -c%s raspios-lite.img)
+        echo "Original image size: $IMAGE_SIZE bytes"
+        
+        # Create loop device
+        sudo losetup -P /dev/loop0 raspios-lite.img
+        
+        # Wait for partitions to be ready
+        sleep 2
+        
+        # Mount partitions
+        mkdir -p mnt/{boot,root}
+        sudo mount /dev/loop0p1 mnt/boot
+        sudo mount /dev/loop0p2 mnt/root
+        
+        # Copy application files to workspace for the setup script
+        mkdir -p /tmp/workspace
+        cp -r ../../* /tmp/workspace/
+        rm -rf /tmp/workspace/.git /tmp/workspace/build
+        
+        # Run setup script
+        sudo ../scripts/setup_image.sh \
+          "$(pwd)/mnt/boot" \
+          "$(pwd)/mnt/root" \
+          "${{ inputs.debug_mode }}"
+        
+        # Cleanup and unmount
+        sudo umount mnt/boot mnt/root
+        sudo losetup -d /dev/loop0
+        
+        # Rename to final image name
+        mv raspios-lite.img "${{ steps.version.outputs.image_name }}.img"
+    
+    - name: Optimize image size
+      run: |
+        cd build/image
+        
+        # Shrink image using pishrink-like approach
+        echo "Optimizing image size..."
+        
+        # Create loop device again for optimization
+        sudo losetup -P /dev/loop0 "${{ steps.version.outputs.image_name }}.img"
+        sleep 2
+        
+        # Run zerofree on the root partition to zero unused blocks
+        sudo zerofree /dev/loop0p2 || true
+        
+        # Cleanup
+        sudo losetup -d /dev/loop0
+        
+        OPTIMIZED_SIZE=$(stat -c%s "${{ steps.version.outputs.image_name }}.img")
+        echo "Optimized image size: $OPTIMIZED_SIZE bytes"
+    
+    - name: Compress image and generate checksums
+      run: |
+        cd build/image
+        
+        # Compress image
+        echo "Compressing image..."
+        zip -9 "${{ steps.version.outputs.image_name }}.zip" "${{ steps.version.outputs.image_name }}.img"
+        
+        # Generate checksums
+        sha256sum "${{ steps.version.outputs.image_name }}.img" > "${{ steps.version.outputs.image_name }}.img.sha256"
+        sha256sum "${{ steps.version.outputs.image_name }}.zip" > "${{ steps.version.outputs.image_name }}.zip.sha256"
+        md5sum "${{ steps.version.outputs.image_name }}.img" > "${{ steps.version.outputs.image_name }}.img.md5"
+        md5sum "${{ steps.version.outputs.image_name }}.zip" > "${{ steps.version.outputs.image_name }}.zip.md5"
+        
+        # Create manifest
+        cat > manifest.txt << EOF
+        Teo der Topf - Raspberry Pi Image Build Manifest
+        ===============================================
+        
+        Build Information:
+        - Version: ${{ steps.version.outputs.version }}
+        - Build Date: ${{ steps.version.outputs.build_date }}
+        - Git Hash: ${{ steps.version.outputs.git_hash }}
+        - Base Image: ${PI_OS_VERSION}
+        - Builder: GitHub Actions
+        
+        Files:
+        - Image: ${{ steps.version.outputs.image_name }}.img
+        - Compressed: ${{ steps.version.outputs.image_name }}.zip
+        - SHA256: ${{ steps.version.outputs.image_name }}.img.sha256
+        - MD5: ${{ steps.version.outputs.image_name }}.img.md5
+        
+        Raspberry Pi Imager Support:
+        - WiFi Configuration: Supported
+        - SSH Activation: Supported  
+        - User Setup: Supported
+        - Advanced Options: Fully Compatible
+        
+        Default Configuration (if not set via Pi Imager):
+        - Username: iot
+        - Password: iot2023!
+        - SSH: Enabled
+        - Hardware: SPI, I2C, UART, I2S enabled
+        
+        Installation Instructions:
+        1. Download and install Raspberry Pi Imager
+        2. Flash the .img file to a microSD card (8GB minimum)
+        3. Use advanced options in Pi Imager to configure WiFi, SSH, and user
+        4. Insert SD card into Raspberry Pi and boot
+        5. Application starts automatically via systemd service
+        
+        For manual setup or troubleshooting, see README.MD
+        EOF
+        
+        # List final files
+        echo "=== Build Results ==="
+        ls -lh
+    
+    - name: Create release notes
+      run: |
+        cat > release_notes.md << EOF
+        # Teo der Topf v${{ steps.version.outputs.version }} - Raspberry Pi Image
+        
+        🎉 **Ready-to-use Raspberry Pi image for the interactive learning companion!**
+        
+        ## 🚀 Quick Start
+        
+        1. **Download** the \`${{ steps.version.outputs.image_name }}.zip\` file
+        2. **Flash** using [Raspberry Pi Imager](https://www.raspberrypi.org/software/)
+        3. **Configure** WiFi, SSH, and user via Imager's advanced options (⚙️ button)
+        4. **Boot** your Raspberry Pi - Teo starts automatically!
+        
+        ## ✨ Features
+        
+        - 🔧 **Fully Pre-configured**: All dependencies and services ready
+        - 📶 **Pi Imager Compatible**: WiFi, SSH, and user setup via UI
+        - 🔄 **Auto-start**: Systemd service ensures reliable operation
+        - 🐍 **Virtual Environment**: Isolated Python dependencies
+        - 🛡️ **Robust**: Automatic restart on failures
+        - 🔧 **Hardware Ready**: SPI, I2C, UART, I2S pre-enabled
+        
+        ## 📋 Technical Details
+        
+        - **Base**: Raspberry Pi OS Lite (Bookworm, 32-bit ARM)
+        - **Version**: ${{ steps.version.outputs.version }}
+        - **Build Date**: ${{ steps.version.outputs.build_date }}
+        - **Git Hash**: ${{ steps.version.outputs.git_hash }}
+        - **Min SD Card**: 8GB
+        - **Default User**: iot (password: iot2023!)
+        
+        ## 🔧 Hardware Configuration
+        
+        - **SPI**: Enabled (for ILI9341 display)
+        - **I2C**: Enabled (for BH1750, BMP280, ADS1115 sensors)
+        - **UART**: Enabled
+        - **I2S**: Enabled  
+        - **GPU Memory**: 128MB
+        - **SSH**: Enabled by default
+        
+        ## 📦 What's Included
+        
+        - Teo der Topf application (v${{ steps.version.outputs.version }})
+        - Python virtual environment with all dependencies
+        - Systemd service for automatic startup
+        - Hardware drivers and configurations
+        - Home Assistant MQTT integration ready
+        - Complete sensor calibration system
+        
+        ## 🛠️ Raspberry Pi Imager Setup
+        
+        When flashing with Raspberry Pi Imager:
+        1. Click the ⚙️ (settings) button
+        2. **Enable SSH** and set your key/password
+        3. **Configure WiFi** with your network credentials  
+        4. **Set username/password** (replaces default iot/iot2023!)
+        5. **Set locale** and keyboard layout
+        6. Flash to SD card
+        
+        ## 🔍 Verification
+        
+        **SHA256**: \`$(cat build/image/${{ steps.version.outputs.image_name }}.img.sha256 | cut -d' ' -f1)\`
+        **MD5**: \`$(cat build/image/${{ steps.version.outputs.image_name }}.img.md5 | cut -d' ' -f1)\`
+        
+        ## 🐛 Troubleshooting
+        
+        - **SSH Access**: \`ssh iot@<raspberry-pi-ip>\` (or your configured user)
+        - **Check Service**: \`sudo systemctl status teo-der-topf\`
+        - **View Logs**: \`sudo journalctl -u teo-der-topf -f\`
+        - **Manual Start**: \`cd /home/iot && ./app.sh\`
+        
+        ## 🎯 Supported Hardware
+        
+        - Raspberry Pi Zero W/2W
+        - Raspberry Pi 3/4/5
+        - ILI9341 320x240 SPI Display
+        - BH1750 Light Sensor (I2C)
+        - BMP280 Temperature/Pressure Sensor (I2C)
+        - ADS1115 ADC + Capacitive Soil Sensor
+        
+        ## 📚 Documentation
+        
+        For detailed hardware assembly, sensor calibration, and development information, see the [README.MD](https://github.com/karlspace/Teo-der-Topf/blob/main/README.MD).
+        
+        ---
+        
+        **Happy Learning with Teo der Topf! 🌱**
+        EOF
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: teo-der-topf-image-v${{ steps.version.outputs.version }}
+        path: |
+          build/image/${{ steps.version.outputs.image_name }}.zip
+          build/image/${{ steps.version.outputs.image_name }}.img.sha256
+          build/image/${{ steps.version.outputs.image_name }}.zip.sha256
+          build/image/${{ steps.version.outputs.image_name }}.img.md5
+          build/image/${{ steps.version.outputs.image_name }}.zip.md5
+          build/image/manifest.txt
+          release_notes.md
+        retention-days: 90
+    
+    - name: Create GitHub Release
+      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: Teo der Topf v${{ steps.version.outputs.version }}
+        body_path: release_notes.md
+        files: |
+          build/image/${{ steps.version.outputs.image_name }}.zip
+          build/image/${{ steps.version.outputs.image_name }}.img.sha256
+          build/image/${{ steps.version.outputs.image_name }}.zip.sha256
+          build/image/${{ steps.version.outputs.image_name }}.img.md5
+          build/image/${{ steps.version.outputs.image_name }}.zip.md5
+          build/image/manifest.txt
+        draft: false
+        prerelease: ${{ contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'alpha') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,8 +1,49 @@
 # Python Temporary Files
 __pycache__
+*.py[cod]
+*$py.class
+*.so
 
 # PyCharm IDE
 .idea
 
 # VSCode IDE
 .vscode
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Package management
+.python-packages-ready
+.python-env-ready
+
+# Application specific
+*.log
+logs/
+temp/
+tmp/
+
+# Build artifacts (image building)
+build/
+*.img
+*.zip
+*.xz
+*.gz
+*.tar
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*~
+*.tmp
+*.bak
+*.swp
+
+# Test files
+.pytest_cache/
+.coverage
+htmlcov/
