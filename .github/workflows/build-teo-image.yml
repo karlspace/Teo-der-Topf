@@ -1,0 +1,556 @@
+name: Build Teo der Topf Raspberry Pi Image
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even without changes'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/teo-der-topf-pi-image
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_date: ${{ steps.date.outputs.date }}
+      should_build: ${{ steps.changes.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from version.py
+        id: version
+        run: |
+          VERSION=$(python3 -c "exec(open('version.py').read()); print(__version__)")
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version detected: ${VERSION}"
+
+      - name: Get build date
+        id: date
+        run: |
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+
+      - name: Check for relevant changes
+        id: changes
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.force_build }}" == "true" ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Build forced via workflow_dispatch"
+            exit 0
+          fi
+          
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Build triggered by tag push"
+            exit 0
+          fi
+          
+          # Check for changes in relevant files
+          if git diff --name-only HEAD~1 HEAD | grep -E "\.(py|sh|txt|yml|yaml)$|^Application/|^other/|^version\.py$|^requirements\.txt$"; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Relevant changes detected"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "No relevant changes detected"
+          fi
+
+  build-image:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pi_model: [
+          { name: "zero-w", config: "lite", arch: "armhf" },
+          { name: "4b", config: "lite", arch: "arm64" }
+        ]
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-user-static \
+            binfmt-support \
+            parted \
+            fdisk \
+            dosfstools \
+            zip \
+            unzip \
+            wget \
+            curl \
+            xz-utils \
+            kpartx \
+            losetup
+
+      - name: Download Raspberry Pi OS base image
+        run: |
+          mkdir -p ./build
+          cd ./build
+          
+          if [[ "${{ matrix.pi_model.arch }}" == "armhf" ]]; then
+            BASE_URL="https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2023-12-11/"
+            IMAGE_FILE="2023-12-05-raspios-bookworm-armhf-lite.img.xz"
+          else
+            BASE_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2023-12-11/"
+            IMAGE_FILE="2023-12-05-raspios-bookworm-arm64-lite.img.xz"
+          fi
+          
+          echo "Downloading ${IMAGE_FILE}..."
+          wget -q "${BASE_URL}${IMAGE_FILE}"
+          echo "Extracting image..."
+          xz -d "${IMAGE_FILE}"
+          BASE_IMAGE="${IMAGE_FILE%.xz}"
+          echo "BASE_IMAGE=${BASE_IMAGE}" >> $GITHUB_ENV
+
+      - name: Prepare image customization
+        run: |
+          cd ./build
+          
+          # Create working copy
+          cp "${BASE_IMAGE}" "teo-der-topf-${{ matrix.pi_model.name }}-${{ needs.prepare.outputs.version }}.img"
+          WORK_IMAGE="teo-der-topf-${{ matrix.pi_model.name }}-${{ needs.prepare.outputs.version }}.img"
+          echo "WORK_IMAGE=${WORK_IMAGE}" >> $GITHUB_ENV
+          
+          # Expand image size for our content
+          dd if=/dev/zero bs=1M count=1024 >> "${WORK_IMAGE}"
+          
+          # Setup loop device
+          sudo losetup -P /dev/loop0 "${WORK_IMAGE}"
+          sudo e2fsck -f -y /dev/loop0p2 || true
+          sudo resize2fs /dev/loop0p2
+          
+          # Mount partitions
+          mkdir -p ./boot ./root
+          sudo mount /dev/loop0p1 ./boot
+          sudo mount /dev/loop0p2 ./root
+
+      - name: Create Pi Imager compatibility files
+        run: |
+          cd ./build
+          
+          # Create firstrun.sh for Pi Imager advanced options
+          cat > ./firstrun.sh << 'EOF'
+          #!/bin/bash
+          
+          # Teo der Topf - First Run Script for Raspberry Pi Imager
+          # This script handles initial configuration with graceful fallbacks
+          
+          set +e  # Don't exit on errors, allow fallbacks
+          
+          FIRSTUSER=$(getent passwd 1000 | cut -d: -f1)
+          FIRSTUSERHOME=$(getent passwd 1000 | cut -d: -f6)
+          
+          # Default fallback credentials
+          DEFAULT_USER="iot"
+          DEFAULT_PASS="iot2023!"
+          
+          echo "Teo der Topf - First Run Configuration Starting..."
+          
+          # Enable hardware interfaces required by Teo der Topf
+          echo "Enabling hardware interfaces..."
+          raspi-config nonint do_spi 0      # Enable SPI
+          raspi-config nonint do_i2c 0      # Enable I2C  
+          raspi-config nonint do_serial 0   # Enable UART
+          raspi-config nonint do_i2s 0      # Enable I2S
+          
+          # Install required packages
+          echo "Installing required packages..."
+          apt-get update -y
+          apt-get install -y vim mc git make gcc cmake build-essential \
+                             python3 python3-pip python3-venv python3-pil \
+                             fonts-dejavu i2c-tools libopenjp2-7 \
+                             systemd-timesyncd
+          
+          # Handle user configuration with fallback
+          if [ -f /boot/userconf.txt ]; then
+              echo "Processing Pi Imager user configuration..."
+              # Pi Imager will handle user creation
+          else
+              echo "No Pi Imager user config found, creating default user..."
+              if ! id "$DEFAULT_USER" &>/dev/null; then
+                  useradd -m -s /bin/bash "$DEFAULT_USER"
+                  echo "$DEFAULT_USER:$DEFAULT_PASS" | chpasswd
+                  usermod -aG adm,dialout,cdrom,sudo,audio,video,plugdev,games,users,input,netdev,gpio,i2c,spi "$DEFAULT_USER"
+                  FIRSTUSER="$DEFAULT_USER"
+                  FIRSTUSERHOME="/home/$DEFAULT_USER"
+              fi
+          fi
+          
+          # Setup application directory
+          TEO_DIR="/home/$FIRSTUSER/teotopf"
+          echo "Setting up Teo der Topf application in $TEO_DIR..."
+          
+          if [ ! -d "$TEO_DIR" ]; then
+              sudo -u "$FIRSTUSER" mkdir -p "$TEO_DIR"
+          fi
+          
+          # Copy application files
+          if [ -d "/opt/teo-der-topf" ]; then
+              cp -r /opt/teo-der-topf/* "$TEO_DIR/"
+              chown -R "$FIRSTUSER:$FIRSTUSER" "$TEO_DIR"
+              chmod +x "$TEO_DIR"/*.sh
+          fi
+          
+          # Install Python dependencies in virtual environment
+          echo "Setting up Python virtual environment..."
+          sudo -u "$FIRSTUSER" bash -c "
+              cd '$TEO_DIR'
+              python3 -m venv venv
+              source venv/bin/activate
+              if [ -f requirements.txt ]; then
+                  pip install --upgrade pip
+                  pip install -r requirements.txt
+              fi
+          "
+          
+          # Create systemd service
+          cat > /etc/systemd/system/teo-der-topf.service << EOSERVICE
+          [Unit]
+          Description=Teo der Topf Interactive Learning Companion
+          After=network.target
+          StartLimitIntervalSec=60
+          StartLimitBurst=3
+          
+          [Service]
+          Type=simple
+          User=$FIRSTUSER
+          Group=$FIRSTUSER
+          WorkingDirectory=$TEO_DIR
+          Environment=PATH=$TEO_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin
+          ExecStart=$TEO_DIR/venv/bin/python $TEO_DIR/main.py
+          Restart=always
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=teo-der-topf
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOSERVICE
+          
+          # Enable and start service
+          systemctl daemon-reload
+          systemctl enable teo-der-topf.service
+          
+          # Add autostart to .profile as fallback
+          echo "Setting up autostart fallback..."
+          sudo -u "$FIRSTUSER" bash -c "
+              echo '' >> '$FIRSTUSERHOME/.profile'
+              echo '# Teo der Topf autostart fallback' >> '$FIRSTUSERHOME/.profile'
+              echo 'if [ -t 1 ] && [ \"\$(tty)\" = \"/dev/tty1\" ]; then' >> '$FIRSTUSERHOME/.profile'
+              echo '    if ! systemctl is-active --quiet teo-der-topf.service; then' >> '$FIRSTUSERHOME/.profile'
+              echo '        echo \"Starting Teo der Topf...\"' >> '$FIRSTUSERHOME/.profile'
+              echo '        cd \"$TEO_DIR\" && ./app.sh' >> '$FIRSTUSERHOME/.profile'
+              echo '    fi' >> '$FIRSTUSERHOME/.profile'
+              echo 'fi' >> '$FIRSTUSERHOME/.profile'
+          "
+          
+          # Setup autologin for console
+          mkdir -p /etc/systemd/system/getty@tty1.service.d
+          cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOAUTOLOGIN
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty --autologin $FIRSTUSER --noclear %I \$TERM
+          EOAUTOLOGIN
+          
+          echo "Teo der Topf - First Run Configuration Complete!"
+          
+          # Cleanup
+          rm -f /boot/firstrun.sh
+          sed -i 's| systemd.run.*||g' /boot/cmdline.txt
+          exit 0
+          EOF
+          
+          sudo cp ./firstrun.sh ./boot/firstrun.sh
+          sudo chmod +x ./boot/firstrun.sh
+
+      - name: Install Teo der Topf application
+        run: |
+          cd ./build
+          
+          # Create application directory in image
+          sudo mkdir -p ./root/opt/teo-der-topf
+          
+          # Copy application files
+          sudo cp -r ../* ./root/opt/teo-der-topf/
+          sudo rm -rf ./root/opt/teo-der-topf/.git
+          sudo rm -rf ./root/opt/teo-der-topf/.github
+          sudo rm -rf ./root/opt/teo-der-topf/build
+          
+          # Set permissions
+          sudo chown -R root:root ./root/opt/teo-der-topf
+          sudo chmod +x ./root/opt/teo-der-topf/*.sh
+
+      - name: Configure Pi Imager support files
+        run: |
+          cd ./build
+          
+          # Enable systemd-firstboot and firstrun script in cmdline.txt
+          CMDLINE=$(sudo cat ./boot/cmdline.txt)
+          if [[ ! "$CMDLINE" =~ "systemd.run" ]]; then
+              echo "${CMDLINE} systemd.run=/boot/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target" | sudo tee ./boot/cmdline.txt
+          fi
+          
+          # Create SSH enable file support (will be checked by Pi Imager)
+          # This is handled automatically by the Pi Imager when SSH is enabled
+          
+          # Create placeholder files that Pi Imager will replace
+          echo "# This file will be replaced by Pi Imager if WiFi is configured" | sudo tee ./boot/wpa_supplicant.conf.example
+          echo "# This file will be replaced by Pi Imager if user is configured" | sudo tee ./boot/userconf.txt.example
+
+      - name: Optimize and cleanup image
+        run: |
+          cd ./build
+          
+          # Clean package cache and temporary files
+          sudo chroot ./root /bin/bash -c "
+              apt-get clean
+              rm -rf /var/lib/apt/lists/*
+              rm -rf /tmp/*
+              rm -rf /var/tmp/*
+              rm -f /var/log/*.log
+              rm -f /var/log/*/*.log
+              history -c
+          "
+          
+          # Unmount and cleanup
+          sudo umount ./boot ./root
+          sudo losetup -d /dev/loop0
+
+      - name: Compress and create checksums
+        run: |
+          cd ./build
+          
+          # Create final image name with version
+          FINAL_NAME="teo-der-topf-${{ matrix.pi_model.name }}-v${{ needs.prepare.outputs.version }}"
+          mv "${WORK_IMAGE}" "${FINAL_NAME}.img"
+          
+          # Compress
+          echo "Compressing image..."
+          zip -9 "${FINAL_NAME}.zip" "${FINAL_NAME}.img"
+          
+          # Create checksums
+          sha256sum "${FINAL_NAME}.zip" > "${FINAL_NAME}.zip.sha256"
+          sha256sum "${FINAL_NAME}.img" > "${FINAL_NAME}.img.sha256"
+          
+          # Create manifest
+          cat > "${FINAL_NAME}.manifest.json" << EOF
+          {
+            "name": "Teo der Topf Raspberry Pi Image",
+            "version": "${{ needs.prepare.outputs.version }}",
+            "model": "${{ matrix.pi_model.name }}",
+            "architecture": "${{ matrix.pi_model.arch }}",
+            "build_date": "${{ needs.prepare.outputs.build_date }}",
+            "base_os": "Raspberry Pi OS Lite (Bookworm)",
+            "features": [
+              "Raspberry Pi Imager Compatible",
+              "Hardware Optimization (SPI, I2C, UART, I2S)",
+              "Python Virtual Environment",
+              "Systemd Service",
+              "Default User: iot/iot2023! (fallback)",
+              "Auto WiFi/SSH/User Configuration Support"
+            ],
+            "default_credentials": {
+              "username": "iot",
+              "password": "iot2023!",
+              "note": "Only used if not configured via Pi Imager"
+            },
+            "image_size_mb": $(stat -c%s "${FINAL_NAME}.img" | awk '{print int($1/1024/1024)}'),
+            "compressed_size_mb": $(stat -c%s "${FINAL_NAME}.zip" | awk '{print int($1/1024/1024)}')
+          }
+          EOF
+          
+          # Store artifacts
+          echo "FINAL_NAME=${FINAL_NAME}" >> $GITHUB_ENV
+          
+          # List files for verification
+          ls -lah ${FINAL_NAME}.*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-der-topf-${{ matrix.pi_model.name }}-v${{ needs.prepare.outputs.version }}
+          path: |
+            build/${{ env.FINAL_NAME }}.zip
+            build/${{ env.FINAL_NAME }}.zip.sha256
+            build/${{ env.FINAL_NAME }}.img.sha256
+            build/${{ env.FINAL_NAME }}.manifest.json
+          retention-days: 30
+
+  create-release:
+    needs: [prepare, build-image]
+    if: needs.prepare.outputs.should_build == 'true' && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-artifacts
+
+      - name: Prepare release notes
+        id: release_notes
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BUILD_DATE="${{ needs.prepare.outputs.build_date }}"
+          
+          cat > release_notes.md << EOF
+          # Teo der Topf v${VERSION} - Raspberry Pi Images
+          
+          **Build Date:** ${BUILD_DATE}
+          **Base OS:** Raspberry Pi OS Lite (Bookworm)
+          
+          ## 🎯 Ready-to-Use Raspberry Pi Images
+          
+          These images are fully configured and ready to flash with **Raspberry Pi Imager** with full support for advanced configuration options.
+          
+          ## 📦 Available Images
+          
+          - **Zero W (32-bit ARM)** - Optimized for Raspberry Pi Zero W and similar devices
+          - **Pi 4B (64-bit ARM)** - Optimized for Raspberry Pi 4B and newer devices
+          
+          ## 🚀 Raspberry Pi Imager Features
+          
+          - ✅ **WiFi Configuration** - Automatically configured via Pi Imager
+          - ✅ **SSH Access** - Enable SSH directly in Pi Imager
+          - ✅ **User Account** - Set your own username/password in Pi Imager
+          - ✅ **Locale Settings** - Configure timezone and keyboard layout
+          
+          ## 🔧 Default Configuration (Fallback)
+          
+          If not configured via Pi Imager:
+          - **Username:** \`iot\`
+          - **Password:** \`iot2023!\`
+          - **SSH:** Disabled (enable via Pi Imager or \`sudo systemctl enable ssh\`)
+          
+          ## 🎮 What's Included
+          
+          - **Teo der Topf Application** - Pre-installed and auto-starting
+          - **Hardware Support** - SPI, I2C, UART, I2S enabled
+          - **Python Environment** - Virtual environment with all dependencies
+          - **Systemd Service** - Robust auto-start with restart capability
+          - **Development Tools** - git, vim, build-essential, and more
+          
+          ## 📋 Hardware Requirements
+          
+          - Raspberry Pi Zero W, Pi 4B, or compatible
+          - ILI9341 Display (320x240px)
+          - BH1750 Light Sensor
+          - BMP280 Temperature/Pressure Sensor
+          - ADS1115 ADC for Soil Sensor
+          - Capacitive Soil Moisture Sensor
+          
+          ## 🔍 Installation
+          
+          1. Download the appropriate image for your Pi model
+          2. Use [Raspberry Pi Imager](https://rpi.org/imager) to flash the image
+          3. Configure WiFi, SSH, and user account in Pi Imager (recommended)
+          4. Boot your Raspberry Pi
+          5. The application starts automatically!
+          
+          ## 🛠️ Manual Configuration
+          
+          If you need to configure manually after first boot:
+          \`\`\`bash
+          cd ~/teotopf
+          ./stop_app.sh  # Stop if running
+          nano .env      # Edit configuration
+          ./app.sh       # Start application
+          \`\`\`
+          
+          ## 📊 Image Details
+          
+          EOF
+          
+          # Add manifest information for each image
+          for manifest in ./release-artifacts/*/*.manifest.json; do
+            if [ -f "$manifest" ]; then
+              MODEL=$(jq -r '.model' "$manifest")
+              ARCH=$(jq -r '.architecture' "$manifest")
+              IMG_SIZE=$(jq -r '.image_size_mb' "$manifest")
+              ZIP_SIZE=$(jq -r '.compressed_size_mb' "$manifest")
+              
+              cat >> release_notes.md << EOF
+          
+          **${MODEL} (${ARCH})**
+          - Image Size: ${IMG_SIZE} MB
+          - Compressed: ${ZIP_SIZE} MB
+          EOF
+            fi
+          done
+          
+          cat >> release_notes.md << EOF
+          
+          ## 🔒 Checksums
+          
+          SHA256 checksums are provided for all files to verify download integrity.
+          
+          ## 🎓 Educational Project
+          
+          Teo der Topf is designed as an educational tinkering project for children to learn:
+          - Programming concepts with Python
+          - Hardware interfacing with sensors
+          - IoT concepts and Home Assistant integration
+          - Data interpretation and visualization
+          
+          Perfect for maker education, STEM learning, and family projects!
+          
+          ---
+          
+          **Note:** This is an educational project. See the full documentation for setup instructions, hardware assembly, and learning activities.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Teo der Topf v${{ needs.prepare.outputs.version }}"
+          body_path: release_notes.md
+          files: |
+            release-artifacts/*/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup:
+    needs: [prepare, build-image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup build space
+        run: |
+          echo "Build workflow completed"
+          df -h
