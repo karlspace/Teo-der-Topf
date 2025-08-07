@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2023 Karl Bauer (BAUER GROUP)
 # SPDX-License-Identifier: MIT
 
-REPO_URL="https://github.com/bauer-group/BAUERGROUPKidsToysTeoTopf.git"
+REPO_URL="https://github.com/karlspace/Teo-der-Topf.git"
 CLONE_PATH="$HOME/teotopf"
 
 function update_packages() {
@@ -44,7 +44,7 @@ function run_setup() {
 }
 
 function main() {
-    echo "One-CLick-Setup starting..."
+    echo "One-Click-Setup starting..."
 
     update_packages
     install_git
