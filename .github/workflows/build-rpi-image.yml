@@ -34,13 +34,18 @@ jobs:
     - name: Setup build environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y qemu-user-static binfmt-support fdisk kpartx zip unzip wget curl
-        sudo apt-get install -y debootstrap systemd-container
+        sudo apt-get install -y qemu-user-static binfmt-support fdisk kpartx zip unzip wget curl xz-utils
+        sudo apt-get install -y debootstrap systemd-container parted e2fsprogs
         
         # Download latest Raspberry Pi OS Lite image
-        wget -O raspios-lite.zip "https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2024-07-04/2024-07-04-raspios-bookworm-armhf-lite.img.xz"
-        unxz raspios-lite.zip || true
-        mv *.img base-image.img || wget -O base-image.img "https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2024-07-04/2024-07-04-raspios-bookworm-armhf-lite.img.xz"
+        echo "Downloading Raspberry Pi OS Lite image..."
+        wget -O raspios-lite.img.xz "https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2024-07-04/2024-07-04-raspios-bookworm-armhf-lite.img.xz"
+        
+        echo "Extracting image..."
+        xz -d raspios-lite.img.xz
+        mv raspios-lite.img base-image.img
+        
+        echo "Base image ready: $(ls -lh base-image.img)"
         
     - name: Extract version and build info
       id: version
@@ -326,13 +331,6 @@ jobs:
         
         chmod +x build-custom-image.sh
         
-    - name: Create der Topf setup stages with Pi Imager support
-      run: |
-        cd rpi-image-gen
-        
-        mkdir -p stage-teo/{00-pi-imager-support,01-packages,02-python-env,03-teo-project,04-system-config,05-optimization}
-        
-        # Stage 0: Pi Imager Support Integration
     - name: Build custom Raspberry Pi image
       run: |
         if [ "${{ github.event.inputs.debug_enabled }}" = "true" ]; then
