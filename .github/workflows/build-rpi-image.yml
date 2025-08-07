@@ -258,11 +258,6 @@ jobs:
             sudo -u iot teo-venv/bin/pip install -r requirements.txt
         fi
         
-        # Download emotions if tool exists
-        if [ -f tools/DownloadAnimatedEmotions.py ]; then
-            sudo -u iot teo-venv/bin/python tools/DownloadAnimatedEmotions.py || true
-        fi
-        
         # Make scripts executable
         chmod +x app.sh stop_app.sh ApplicationSetup.sh 2>/dev/null || true
         chown -R iot:iot /home/iot/
