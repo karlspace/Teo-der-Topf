@@ -62,6 +62,7 @@ jobs:
         
     - name: Create custom image build script
       run: |
+        # Create the main build script
         cat > build-custom-image.sh << 'EOF'
         #!/bin/bash
         set -e
@@ -117,28 +118,86 @@ jobs:
         sudo mkdir -p "${MOUNT_DIR}/boot"
         sudo mount "$BOOT_DEV" "${MOUNT_DIR}/boot"
         
-        # Enable required modules
+        # Configure hardware in config.txt
         echo "Configuring hardware support..."
-        sudo tee -a "${MOUNT_DIR}/boot/config.txt" << CONFIG_EOF
+        if ! grep -q "# Teo der Topf Hardware Configuration" "${MOUNT_DIR}/boot/config.txt"; then
+            echo "" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "# Teo der Topf Hardware Configuration" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "dtparam=spi=on" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "dtparam=i2c_arm=on" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "dtparam=i2s=on" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "enable_uart=1" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "# Performance optimization" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "gpu_mem=16" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "disable_camera_led=1" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "dtparam=audio=off" >> "${MOUNT_DIR}/boot/config.txt"
+        fi
         
-        # Teo der Topf Hardware Configuration
-        dtparam=spi=on
-        dtparam=i2c_arm=on
-        dtparam=i2s=on
-        enable_uart=1
-        
-        # Performance optimization
-        gpu_mem=16
-        disable_camera_led=1
-        dtparam=audio=off
-        CONFIG_EOF
-        
-        # Install packages and setup environment
+        # Setup chroot environment
         echo "Setting up chroot environment..."
         sudo cp /usr/bin/qemu-arm-static "${MOUNT_DIR}/usr/bin/"
         
-        # Create setup script for chroot
-        sudo tee "${MOUNT_DIR}/tmp/setup.sh" << 'SETUP_EOF'
+        # Call the package setup script
+        ./setup-packages.sh "$MOUNT_DIR"
+        
+        # Copy Teo project
+        echo "Installing Teo der Topf application..."
+        sudo cp -r teo-source/* "${MOUNT_DIR}/home/iot/"
+        
+        # Call the Python setup script
+        ./setup-python.sh "$MOUNT_DIR"
+        
+        # Call the service setup script
+        ./setup-service.sh "$MOUNT_DIR"
+        
+        # Call the Pi Imager setup script
+        ./setup-firstrun.sh "$MOUNT_DIR"
+        
+        # Create build info
+        cat > "${MOUNT_DIR}/home/iot/BUILD_INFO.txt" << 'BUILD_INFO_EOF'
+        Teo der Topf - Custom Raspberry Pi Image
+        ========================================
+        
+        Version: ${{ steps.version.outputs.version }}
+        Build: ${{ steps.version.outputs.build_date }}
+        Commit: ${{ steps.version.outputs.commit_sha }}
+        
+        Default Credentials:
+        - User: iot
+        - Password: iot2023!
+        
+        Pi Imager Support:
+        - WiFi, SSH, User configuration via Pi Imager advanced options
+        - Hardware: SPI, I2C, UART pre-configured
+        - Auto-start: Teo application starts automatically
+        
+        Control Commands:
+        - systemctl status teo-der-topf
+        - journalctl -u teo-der-topf -f
+        - ~/app.sh / ~/stop_app.sh
+        BUILD_INFO_EOF
+        
+        sudo chown iot:iot "${MOUNT_DIR}/home/iot/BUILD_INFO.txt"
+        
+        # Clean up temporary files
+        sudo rm -f "${MOUNT_DIR}/tmp/setup.sh" "${MOUNT_DIR}/tmp/python-setup.sh"
+        sudo rm -f "${MOUNT_DIR}/usr/bin/qemu-arm-static"
+        
+        # Create empty files for Pi Imager
+        sudo touch "${MOUNT_DIR}/boot/ssh"
+        sudo touch "${MOUNT_DIR}/boot/userconf.txt"  
+        sudo touch "${MOUNT_DIR}/boot/wpa_supplicant.conf"
+        
+        echo "Image customization complete!"
+        EOF
+        
+        # Create package setup script
+        cat > setup-packages.sh << 'EOF'
+        #!/bin/bash
+        MOUNT_DIR="$1"
+        
+        cat > "${MOUNT_DIR}/tmp/setup.sh" << 'SCRIPT_EOF'
         #!/bin/bash
         set -e
         
@@ -160,37 +219,34 @@ jobs:
         
         # Setup autologin
         mkdir -p /etc/systemd/system/getty@tty1.service.d/
-        cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << AUTOLOGIN_EOF
+        cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << 'AUTOLOGIN_EOF'
         [Service]
         ExecStart=
-        ExecStart=-/sbin/agetty --autologin iot --noclear %I \$TERM
+        ExecStart=-/sbin/agetty --autologin iot --noclear %I $TERM
         AUTOLOGIN_EOF
         
         # Enable SSH
         systemctl enable ssh
         
-        # Configure hardware
-        raspi-config nonint do_spi 0
-        raspi-config nonint do_i2c 0
-        raspi-config nonint do_serial 0
+        # Load hardware modules at boot
+        echo "i2c-dev" >> /etc/modules
+        echo "spi-dev" >> /etc/modules
         
         # Cleanup
         apt-get clean
         rm -rf /var/lib/apt/lists/*
-        SETUP_EOF
+        SCRIPT_EOF
         
         sudo chmod +x "${MOUNT_DIR}/tmp/setup.sh"
-        
-        # Run setup in chroot
-        echo "Running setup in chroot..."
         sudo chroot "$MOUNT_DIR" /tmp/setup.sh
+        EOF
         
-        # Copy Teo project
-        echo "Installing Teo der Topf application..."
-        sudo cp -r teo-source/* "${MOUNT_DIR}/home/iot/"
+        # Create Python setup script
+        cat > setup-python.sh << 'EOF'
+        #!/bin/bash
+        MOUNT_DIR="$1"
         
-        # Create Python virtual environment and install dependencies
-        sudo tee "${MOUNT_DIR}/tmp/python-setup.sh" << 'PYTHON_EOF'
+        cat > "${MOUNT_DIR}/tmp/python-setup.sh" << 'SCRIPT_EOF'
         #!/bin/bash
         set -e
         
@@ -210,13 +266,18 @@ jobs:
         # Make scripts executable
         chmod +x app.sh stop_app.sh ApplicationSetup.sh 2>/dev/null || true
         chown -R iot:iot /home/iot/
-        PYTHON_EOF
+        SCRIPT_EOF
         
         sudo chmod +x "${MOUNT_DIR}/tmp/python-setup.sh"
         sudo chroot "$MOUNT_DIR" /tmp/python-setup.sh
+        EOF
         
-        # Create systemd service
-        sudo tee "${MOUNT_DIR}/etc/systemd/system/teo-der-topf.service" << 'SERVICE_EOF'
+        # Create service setup script
+        cat > setup-service.sh << 'EOF'
+        #!/bin/bash
+        MOUNT_DIR="$1"
+        
+        cat > "${MOUNT_DIR}/etc/systemd/system/teo-der-topf.service" << 'SCRIPT_EOF'
         [Unit]
         Description=Teo der Topf Application
         After=network-online.target
@@ -235,13 +296,18 @@ jobs:
         
         [Install]
         WantedBy=multi-user.target
-        SERVICE_EOF
+        SCRIPT_EOF
         
         # Enable service
         sudo chroot "$MOUNT_DIR" systemctl enable teo-der-topf.service
+        EOF
         
-        # Create Pi Imager firstrun script
-        sudo tee "${MOUNT_DIR}/boot/firstrun.sh" << 'FIRSTRUN_EOF'
+        # Create firstrun setup script  
+        cat > setup-firstrun.sh << 'EOF'
+        #!/bin/bash
+        MOUNT_DIR="$1"
+        
+        cat > "${MOUNT_DIR}/boot/firstrun.sh" << 'SCRIPT_EOF'
         #!/bin/bash
         set +e
         
@@ -281,55 +347,19 @@ jobs:
         rm -f /boot/firstrun.sh
         sed -i '/firstrun\.sh/d' /boot/config.txt
         exit 0
-        FIRSTRUN_EOF
+        SCRIPT_EOF
         
         sudo chmod +x "${MOUNT_DIR}/boot/firstrun.sh"
         
         # Add firstrun to config.txt if not already there
         if ! grep -q "firstrun.sh" "${MOUNT_DIR}/boot/config.txt"; then
-            echo "" | sudo tee -a "${MOUNT_DIR}/boot/config.txt"
-            echo "# Pi Imager firstrun script" | sudo tee -a "${MOUNT_DIR}/boot/config.txt"
+            echo "" >> "${MOUNT_DIR}/boot/config.txt"
+            echo "# Pi Imager firstrun script" >> "${MOUNT_DIR}/boot/config.txt"
         fi
-        
-        # Create build info
-        sudo tee "${MOUNT_DIR}/home/iot/BUILD_INFO.txt" << BUILD_INFO_EOF
-        Teo der Topf - Custom Raspberry Pi Image
-        ========================================
-        
-        Version: ${{ steps.version.outputs.version }}
-        Build: ${{ steps.version.outputs.build_date }}
-        Commit: ${{ steps.version.outputs.commit_sha }}
-        
-        Default Credentials:
-        - User: iot
-        - Password: iot2023!
-        
-        Pi Imager Support:
-        - WiFi, SSH, User configuration via Pi Imager advanced options
-        - Hardware: SPI, I2C, UART pre-configured
-        - Auto-start: Teo application starts automatically
-        
-        Control Commands:
-        - systemctl status teo-der-topf
-        - journalctl -u teo-der-topf -f
-        - ~/app.sh / ~/stop_app.sh
-        BUILD_INFO_EOF
-        
-        sudo chown iot:iot "${MOUNT_DIR}/home/iot/BUILD_INFO.txt"
-        
-        # Clean up temporary files
-        sudo rm -f "${MOUNT_DIR}/tmp/setup.sh" "${MOUNT_DIR}/tmp/python-setup.sh"
-        sudo rm -f "${MOUNT_DIR}/usr/bin/qemu-arm-static"
-        
-        # Create empty files for Pi Imager
-        sudo touch "${MOUNT_DIR}/boot/ssh"
-        sudo touch "${MOUNT_DIR}/boot/userconf.txt"  
-        sudo touch "${MOUNT_DIR}/boot/wpa_supplicant.conf"
-        
-        echo "Image customization complete!"
         EOF
         
-        chmod +x build-custom-image.sh
+        # Make all scripts executable
+        chmod +x build-custom-image.sh setup-packages.sh setup-python.sh setup-service.sh setup-firstrun.sh
         
     - name: Build custom Raspberry Pi image
       run: |
