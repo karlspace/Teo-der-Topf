@@ -4,6 +4,26 @@
 
 ![Final Build Example](./_Hardware/Assembly/Final%20Build%20Example.png)
 
+## 🚀 Quick Start with Pre-built Image
+
+**The easiest way to get started is using our pre-built Raspberry Pi image:**
+
+1. **Download** the latest image from [Releases](../../releases)
+2. **Flash** using [Raspberry Pi Imager](https://www.raspberrypi.org/software/)
+3. **Configure** WiFi, SSH, and user via Imager's advanced options (⚙️ button)
+4. **Boot** your Raspberry Pi - Teo starts automatically!
+
+**Default credentials** (if not set via Pi Imager): Username `iot`, Password `iot2023!`
+
+### 🎯 Supported Hardware
+- Raspberry Pi Zero W/2W, Pi 3/4/5
+- ILI9341 320x240 SPI Display
+- BH1750 Light Sensor (I2C)
+- BMP280 Temperature/Pressure Sensor (I2C)  
+- ADS1115 ADC + Capacitive Soil Sensor
+
+---
+
 ## Project Overview
 
 At the heart of "Teo der Topf" lies a Raspberry Pi connected to various sensors that measure parameters such as soil moisture, temperature, and ambient light. These measurements are then translated into emotive responses displayed on the Raspberry Pi's screen, represented by an animated "face".
@@ -23,6 +43,31 @@ Furthermore, the project integrates with the Home Assistant smart home system, a
 "Teo der Topf" combines education and entertainment, fostering an environment where learning is an enjoyable adventure. As children tinker, experiment, and play with "Teo", they are not only developing valuable skills but also nurturing curiosity, creativity, and a love for technology.
 
 # Software Setup
+
+## Option 1: Pre-built Image (Recommended)
+
+**Download and flash our ready-to-use Raspberry Pi image:**
+
+1. **Download** the latest `teo-der-topf-*.zip` from [Releases](../../releases)
+2. **Install** [Raspberry Pi Imager](https://www.raspberrypi.org/software/)
+3. **Flash** the image to your microSD card (8GB minimum)
+4. **Configure** (optional):
+   - Click ⚙️ in Pi Imager for advanced options
+   - Set WiFi credentials, SSH access, and user account
+   - Configure timezone and keyboard layout
+5. **Boot** your Raspberry Pi and enjoy!
+
+The pre-built image includes:
+- ✅ All dependencies pre-installed
+- ✅ Hardware interfaces enabled (SPI, I2C, UART, I2S)
+- ✅ Systemd service for automatic startup
+- ✅ Virtual environment with all Python packages
+- ✅ SSH enabled for remote access
+- ✅ Full Pi Imager advanced options support
+
+## Option 2: Manual Installation
+
+If you prefer to set up manually or want to develop:
 
 ## Raspberry Pi OS installation
 
@@ -114,6 +159,36 @@ This software setup consists of three bash scripts: `ApplicationSetup.sh`, `app.
 With this setup, the application will automatically start upon boot due to the autostart configuration set up by `ApplicationSetup.sh`. Manual start and stop controls are also available through `app.sh` and `stop_app.sh` respectively.
 
 This setup ensures a streamlined deployment and execution process for the application, making it easier for users and systems to handle the application lifecycle effectively.
+
+## Option 3: Building Custom Images
+
+**For developers or advanced users who want to build their own images:**
+
+### Automatic Building (GitHub Actions)
+1. Fork this repository
+2. Go to Actions tab → "Build Raspberry Pi Image for Teo der Topf"  
+3. Click "Run workflow" and wait for completion (~30-45 minutes)
+4. Download the built image from workflow artifacts
+
+### Manual Building
+```bash
+# Install prerequisites (Ubuntu/Debian)
+sudo apt-get install qemu-user-static binfmt-support wget xz-utils zip kpartx util-linux zerofree
+
+# Build the image
+./scripts/build_image.sh
+
+# Find your image
+ls build/image/teo-der-topf-*.zip
+```
+
+**Features of custom builds:**
+- Latest code from repository
+- Custom version numbers  
+- Debug builds for development
+- Full control over included packages
+
+See [scripts/README.md](scripts/README.md) for detailed build instructions.
 
 ### .env Configuration File
 
