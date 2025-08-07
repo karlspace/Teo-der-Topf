@@ -144,7 +144,6 @@ jobs:
         # Copy Teo project AFTER user creation
         echo "Installing Teo der Topf application..."
         sudo cp -r teo-source/* "${MOUNT_DIR}/home/iot/"
-        sudo chown -R iot:iot "${MOUNT_DIR}/home/iot/"
         
         # Call the Python setup script
         ./setup-python.sh "$MOUNT_DIR"
@@ -252,6 +251,10 @@ jobs:
         set -e
         
         cd /home/iot
+        
+        # Fix ownership (files were copied as root)
+        chown -R iot:iot /home/iot/
+        
         sudo -u iot python3 -m venv teo-venv
         sudo -u iot teo-venv/bin/pip install --upgrade pip
         
