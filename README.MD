@@ -46,11 +46,56 @@ Once the image has been written to the microSD card, safely remove it and insert
 
 The device should boot up and connect to your WiFi network using the credentials you provided. As the Raspberry Pi Zero W is a headless device (i.e., without a dedicated display), you can connect to it remotely using SSH.
 
-After you've established an SSH connection to your Raspberry Pi, you can proceed to run the `ApplicationSetup.sh` script to set up the application environment. Please refer to the [Setup Instructions](###Useage) section for more details.
+After you've established an SSH connection to your Raspberry Pi, you can proceed with the application setup as described below.
 
 ## Application download and setup
 
-todo...
+Once you have successfully connected to your Raspberry Pi Zero W via SSH, you can use the one-click setup script to automatically download and configure the entire "Teo der Topf" application.
+
+### Option 1: One-Click Setup (Recommended)
+
+The easiest way to install the application is using the one-click setup script. This script will automatically:
+- Update the package lists
+- Install Git (if not already installed)
+- Clone the latest version of the repository
+- Run the complete application setup
+
+You can execute the one-click setup using one of the following commands:
+
+**Using curl:**
+```bash
+curl -sSL https://raw.githubusercontent.com/karlspace/Teo-der-Topf/main/other/one-click-setup.sh | bash
+```
+
+**Using wget:**
+```bash
+wget -O - https://raw.githubusercontent.com/karlspace/Teo-der-Topf/main/other/one-click-setup.sh | bash
+```
+
+The script will download the project to `~/teotopf` directory and automatically run the `ApplicationSetup.sh` script to complete the installation.
+
+### Option 2: Manual Setup
+
+If you prefer to set up the application manually, follow these steps:
+
+1. **Install Git** (if not already installed):
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y git
+   ```
+
+2. **Clone the repository**:
+   ```bash
+   mkdir -p ~/teotopf
+   cd ~/teotopf
+   git clone --depth 1 https://github.com/karlspace/Teo-der-Topf.git .
+   ```
+
+3. **Run the application setup**:
+   ```bash
+   chmod +x ApplicationSetup.sh
+   ./ApplicationSetup.sh
+   ```
 
 > **Note:** that the steps under "Configuration and usage information" are optional and you can already start after the steps in this section. The soil moisture sensor must be calibrated, but the project will work without calibrating it (lower accuracy).
 
