@@ -138,12 +138,13 @@ jobs:
         echo "Setting up chroot environment..."
         sudo cp /usr/bin/qemu-arm-static "${MOUNT_DIR}/usr/bin/"
         
-        # Call the package setup script
+        # Call the package setup script (creates iot user)
         ./setup-packages.sh "$MOUNT_DIR"
         
-        # Copy Teo project
+        # Copy Teo project AFTER user creation
         echo "Installing Teo der Topf application..."
         sudo cp -r teo-source/* "${MOUNT_DIR}/home/iot/"
+        sudo chown -R iot:iot "${MOUNT_DIR}/home/iot/"
         
         # Call the Python setup script
         ./setup-python.sh "$MOUNT_DIR"
@@ -260,7 +261,6 @@ jobs:
         
         # Make scripts executable
         chmod +x app.sh stop_app.sh ApplicationSetup.sh 2>/dev/null || true
-        chown -R iot:iot /home/iot/
         SCRIPT_EOF
         
         sudo chmod +x "${MOUNT_DIR}/tmp/python-setup.sh"
