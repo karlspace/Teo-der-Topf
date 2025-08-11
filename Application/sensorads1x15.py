@@ -32,6 +32,9 @@ class SensorADS1x15:
         # Set up list for callback functions
         self.callbacks = []
 
+        # Event to control polling thread
+        self._stop_event = threading.Event()
+
         self.polling_thread = threading.Thread(target=self._poll_sensor)
         self.polling_thread.daemon = True
         self.polling_thread.start()
@@ -50,8 +53,13 @@ class SensorADS1x15:
 
         return current_values
 
+    def stop(self):
+        self._stop_event.set()
+        if self.polling_thread.is_alive():
+            self.polling_thread.join()
+
     def _poll_sensor(self):
-        while True:
+        while not self._stop_event.is_set():
             # Get current readings
             current_values = [channel.value for channel in self.channels]
 
