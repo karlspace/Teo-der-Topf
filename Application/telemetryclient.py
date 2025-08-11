@@ -1,20 +1,29 @@
 # SPDX-FileCopyrightText: 2023 Karl Bauer (BAUER GROUP)
 # SPDX-License-Identifier: MIT
 
-#######################################################################################################################
+###############################################################################
 #
 # Description :  Package for Toni der Topf
 # Author      :  Karl Bauer (karl.bauer@bauer-group.com) / www.bauer-group.com
 #
-#######################################################################################################################
+###############################################################################
 
 # System Imports
 from datetime import datetime
 import json
 import paho.mqtt.client as mqtt
 
+
 class TelemetryClient:
-    def __init__(self, mqtt_server, base_topic, sensor_manager, username, password, mqtt_port=1883):
+    def __init__(
+        self,
+        mqtt_server,
+        base_topic,
+        sensor_manager,
+        username,
+        password,
+        mqtt_port=1883,
+    ):
         self.mqtt_server = mqtt_server
         self.mqtt_port = mqtt_port
         self.base_topic = base_topic
@@ -29,34 +38,40 @@ class TelemetryClient:
         # Connect to the MQTT server
         self.client.connect(self.mqtt_server, self.mqtt_port)
 
-        # Set up subscriptions to sensor callbacks
-        self.sensor_manager.subscribe_temperature(self.temperature_callback)
-        self.sensor_manager.subscribe_pressure(self.pressure_callback)
-        self.sensor_manager.subscribe_light_intensity(self.light_intensity_callback)
-        self.sensor_manager.subscribe_ads1x15_channel_values(self.ads1x15_channel_values_callback)
+        # Register callbacks with the SensorManager
+        self.sensor_manager.register_callback(self.temperature_callback)
+        self.sensor_manager.register_callback(self.pressure_callback)
+        self.sensor_manager.register_callback(self.light_intensity_callback)
+        self.sensor_manager.register_callback(
+            self.ads1x15_channel_values_callback
+        )
 
-    def temperature_callback(self, temperature):
+    def temperature_callback(self, sensor_manager):
+        temperature = sensor_manager.temperature
         payload = json.dumps({
             "celsius": temperature,
             "timestamp": datetime.now().isoformat()
         })
         self.client.publish(f"{self.base_topic}/temperature", payload)
 
-    def pressure_callback(self, pressure):
+    def pressure_callback(self, sensor_manager):
+        pressure = sensor_manager.pressure
         payload = json.dumps({
             "hpa": pressure,
             "timestamp": datetime.now().isoformat()
         })
         self.client.publish(f"{self.base_topic}/pressure", payload)
 
-    def light_intensity_callback(self, light_intensity):
+    def light_intensity_callback(self, sensor_manager):
+        light_intensity = sensor_manager.light_intensity
         payload = json.dumps({
             "lux": light_intensity,
             "timestamp": datetime.now().isoformat()
         })
         self.client.publish(f"{self.base_topic}/light_intensity", payload)
 
-    def ads1x15_channel_values_callback(self, ads1x15_channel_values):
+    def ads1x15_channel_values_callback(self, sensor_manager):
+        ads1x15_channel_values = sensor_manager.ads1x15_channel_values
         payload = json.dumps({
             "channel0": ads1x15_channel_values[0],
             "channel1": ads1x15_channel_values[1],
