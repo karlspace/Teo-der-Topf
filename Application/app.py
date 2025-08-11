@@ -9,13 +9,8 @@
 #######################################################################################################################
 
 # System Imports
-import os
-import sys
 import threading
 import time
-import logging
-from enum import Enum
-from threading import Lock
 
 # Local Imports
 from .configuration import Configuration
@@ -105,7 +100,7 @@ class Application:
 
         self._log.info(f"{temperature_str} / {pressure_str} / {light_intensity_str}")
         self._log.info(f"A/D: {ads1x15_values_str}")
-        self._log.info(f"Display Emotion: {self.display_manager._current_emotion}")
+        self._log.info(f"Display Emotion: {self.display_manager._current_emotion.value}")
 
     ###################################################################################################################
     def show_random_emotions(self):
