@@ -151,6 +151,11 @@ class DisplayManager(threading.Thread):
         else:
             raise ValueError(f"Invalid emotion: {emotion}. Valid emotions are: {self._VALID_EMOTIONS}")
 
+    @property
+    def current_emotion(self):
+        """Return the emotion currently being displayed."""
+        return self._current_emotion
+
     def run(self):
         self._is_running = True
         self._backlight.value = True  # Turn on the backlight when starting
