@@ -44,7 +44,7 @@ class Configuration:
 
         self.NIGHT_MODE_BELOW = float(os.environ.get('NIGHT_MODE_BELOW', 5.00))
 
-        self.HOMEASSISTANT_ENABLED = os.environ.get('HOMEASSISTANT_ENABLED', False)
+        self.HOMEASSISTANT_ENABLED = os.environ.get('HOMEASSISTANT_ENABLED', 'false').lower() == 'true'
         self.HOMEASSISTANT_ID = os.environ.get('HOMEASSISTANT_ID', 'TeoTopf')
         self.HOMEASSISTANT_MQTT_SERVER = os.environ.get('HOMEASSISTANT_MQTT_SERVER', 'undefined')
         self.HOMEASSISTANT_MQTT_USER = os.environ.get('HOMEASSISTANT_MQTT_USER', 'undefined')
