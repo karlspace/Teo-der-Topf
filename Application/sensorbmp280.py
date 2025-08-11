@@ -28,6 +28,9 @@ class SensorBMP280:
         # Set up list for callback functions
         self.callbacks = []
 
+        # Event to control polling thread
+        self._stop_event = threading.Event()
+
         self.polling_thread = threading.Thread(target=self._poll_sensor)
         self.polling_thread.daemon = True
         self.polling_thread.start()
@@ -47,8 +50,13 @@ class SensorBMP280:
 
         return current_temperature, current_pressure
 
+    def stop(self):
+        self._stop_event.set()
+        if self.polling_thread.is_alive():
+            self.polling_thread.join()
+
     def _poll_sensor(self):
-        while True:
+        while not self._stop_event.is_set():
             # Get current readings
             current_temperature = round(self.bmp280.temperature, 2)
             current_pressure = round(self.bmp280.pressure, 2)

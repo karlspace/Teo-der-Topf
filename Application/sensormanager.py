@@ -83,3 +83,8 @@ class SensorManager:
 
         # Immediately call the new callback with the current sensor values
         callback(self)
+
+    def stop(self):
+        self._sensor_bmp280.stop()
+        self._sensor_bh1750.stop()
+        self._sensor_ads1x15.stop()

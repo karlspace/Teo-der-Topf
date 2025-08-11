@@ -27,6 +27,9 @@ class SensorBH1750:
         # Set up list for callback functions
         self.callbacks = []
 
+        # Event to control polling thread
+        self._stop_event = threading.Event()
+
         self.polling_thread = threading.Thread(target=self._poll_sensor)
         self.polling_thread.daemon = True
         self.polling_thread.start()
@@ -44,8 +47,13 @@ class SensorBH1750:
 
         return current_light_intensity
 
+    def stop(self):
+        self._stop_event.set()
+        if self.polling_thread.is_alive():
+            self.polling_thread.join()
+
     def _poll_sensor(self):
-        while True:
+        while not self._stop_event.is_set():
             # Get current reading
             current_light_intensity = round(self.bh1750.lux, 2)
 
