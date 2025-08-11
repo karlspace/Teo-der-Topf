@@ -26,7 +26,7 @@ class Configuration:
 
     def _initialize(self):
         config_from_environment = os.environ.get('CONFIG_FROM_ENVIRONMENT', 'false').lower() == 'true'
-        if config_from_environment == False:
+        if not config_from_environment:
             # Load Local .env File to Environment
             env_path = Path.cwd() / '.env'
             load_dotenv(dotenv_path=env_path)
@@ -58,8 +58,8 @@ class Configuration:
         self._log.info(f"|- Soil Sensor - DRY: > {self.SOIL_DRY_ABOVE}")
         self._log.info(f"|- Soil Sensor - WET: < {self.SOIL_WET_BELOW}")
 
-        self._log.info(f"|- Temperature - HOT: > {self.TEMPERATURE_COLD_BELOW}")
-        self._log.info(f"|- Temperature - COLD: < {self.TEMPERATURE_HOT_ABOVE}")
+        self._log.info(f"|- Temperature - HOT: > {self.TEMPERATURE_HOT_ABOVE}")
+        self._log.info(f"|- Temperature - COLD: < {self.TEMPERATURE_COLD_BELOW}")
 
         self._log.info(f"|- Night Mode: < {self.NIGHT_MODE_BELOW}")
 
