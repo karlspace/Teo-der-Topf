@@ -18,8 +18,10 @@ from .sensorbh1750 import SensorBH1750
 from .sensorbmp280 import SensorBMP280
 
 class SensorManager:
-    def __init__(self, i2c_bus = busio.I2C(board.SCL, board.SDA), bmp280_address=0x76, bh1750_address=0x23, ads1x15_address=0x48):
+    def __init__(self, i2c_bus=None, bmp280_address=0x76, bh1750_address=0x23, ads1x15_address=0x48):
         # Create a single I2C bus instance
+        if i2c_bus is None:
+            i2c_bus = busio.I2C(board.SCL, board.SDA)
         self._i2c_bus = i2c_bus
 
         # Initialize list for manager-specific callbacks
@@ -83,3 +85,8 @@ class SensorManager:
 
         # Immediately call the new callback with the current sensor values
         callback(self)
+
+    def stop(self):
+        self._sensor_bmp280.stop()
+        self._sensor_bh1750.stop()
+        self._sensor_ads1x15.stop()

@@ -55,6 +55,9 @@ class Application:
         if self._app_thread is not None:
             self._app_thread.join()
 
+        # Stop sensors
+        self.sensor_manager.stop()
+
         # Stop Display Manager
         self.display_manager.stop()
 
