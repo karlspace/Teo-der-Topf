@@ -144,9 +144,16 @@ class HomeAssistantSensor:
 
         # Convert the ADC values to percentages and build the payloads
         for i, value in enumerate(sensor_manager.ads1x15_channel_values):
+            # Skip channels without values
+            if value is None:
+                continue
+
             sensor_name = "moisture" if i == 0 else f"ad-channel{i}"
             if sensor_name == "moisture":
-                value = round(self._conversion_soil_moisture(value), 2)  # Only convert soil moisture values to percentages
+                value = self._conversion_soil_moisture(value)  # Only convert soil moisture values to percentages
+                if value is None:
+                    continue
+                value = round(value, 2)
             payload = json.dumps(value)  # Send the value directly
 
             # Publish the sensor values
@@ -157,6 +164,8 @@ class HomeAssistantSensor:
         return (ad_value / 32767) * 100
 
     def _conversion_soil_moisture(self, ad_value):
+        if ad_value is None:
+            return None
         soil_range = self._config.SOIL_MAX - self._config.SOIL_MIN
         relative_ad = max(min(ad_value, self._config.SOIL_MAX), self._config.SOIL_MIN) - self._config.SOIL_MIN
         return 100 - ((relative_ad / soil_range) * 100)
