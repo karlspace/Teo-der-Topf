@@ -4,6 +4,7 @@ import sys
 import types
 
 import paho.mqtt.client as mqtt
+import pytest
 
 root_path = Path(__file__).resolve().parents[1]
 sys.path.append(str(root_path))
@@ -75,3 +76,21 @@ def test_sensor_manager_callback_skips_none():
     topics = [t for (t, _, _) in sensor._client.published]
     skipped_topic = f"{sensor._base_topic}/sensor/{sensor._client_id}/ad-channel1/state"
     assert skipped_topic not in topics
+
+
+def test_conversion_to_relative_midpoint():
+    """ADC values are converted to percentages."""
+    result = HomeAssistantSensor._conversion_to_relative(16383.5)
+    assert result == pytest.approx(50.0, abs=0.1)
+
+
+@patch.object(mqtt, "Client", DummyClient)
+def test_conversion_soil_moisture_bounds():
+    config = Configuration()
+    logger = ApplicationLogger(level=0)
+    sensor = HomeAssistantSensor("localhost", "id", "user", "pwd", None, logger, config)
+
+    assert sensor._conversion_soil_moisture(config.SOIL_MIN) == pytest.approx(100.0)
+    assert sensor._conversion_soil_moisture(config.SOIL_MAX) == pytest.approx(0.0)
+    assert sensor._conversion_soil_moisture(config.SOIL_MAX + 1000) == pytest.approx(0.0)
+    assert sensor._conversion_soil_moisture(config.SOIL_MIN - 1000) == pytest.approx(100.0)
