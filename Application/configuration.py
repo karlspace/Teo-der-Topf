@@ -72,7 +72,12 @@ class Configuration:
     ###################################################################################################################
 
     @staticmethod
-    def loglevel_from_string(log_level: str):
-        return logging.getLevelName(log_level)
+    def loglevel_from_string(log_level: str, default: int = logging.INFO) -> int:
+        """Return the logging level for ``log_level``.
+
+        If the provided level name is unknown, ``default`` (``logging.INFO`` by
+        default) is returned instead.
+        """
+        return logging._nameToLevel.get(log_level.upper(), default)
 
 #######################################################################################################################

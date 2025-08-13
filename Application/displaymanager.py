@@ -13,7 +13,6 @@ import os
 import time
 import threading
 from enum import Enum
-
 from PIL import Image, ImageDraw
 import shutil
 import json
@@ -41,19 +40,32 @@ class DisplayManager(threading.Thread):
 
     _VALID_EMOTIONS = list(Emotions)
 
-    def __init__(self, app_logger: ApplicationLogger, frame_rate=5, frames_skip=0, default_emotion=Emotions.HAPPY, assets_folder='assets/emotion', shift_x=0, rotate=0):
+    def __init__(
+        self,
+        app_logger: ApplicationLogger,
+        frame_rate=5,
+        frames_skip=0,
+        default_emotion=Emotions.HAPPY,
+        assets_folder="assets/emotion",
+        shift_x=0,
+        rotate=0,
+    ):
         threading.Thread.__init__(self)
         self._log = app_logger
-        self._log.debug('Initializing Display Manager...')
+        self._log.debug("Initializing Display Manager...")
 
         self._frame_rate = frame_rate
         self._frames_skip = max(1, frames_skip)
         self._current_emotion = default_emotion
-        self._assets_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)), assets_folder)
+        self._assets_folder = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), assets_folder
+        )
         self._shift_x = shift_x
         self._rotate = rotate
         self._is_running = False
-        self._temp_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets/temp')
+        self._temp_folder = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "assets/temp"
+        )
 
         # Backlight setup
         self._backlight = digitalio.DigitalInOut(board.D23)
@@ -68,19 +80,21 @@ class DisplayManager(threading.Thread):
         self._prepare_images()
 
     def _prepare_images(self):
-        self._log.debug('Checking and preparing images temp folder...')
-        settings_path = os.path.join(self._temp_folder, 'displaysettings.json')
+        self._log.debug("Checking and preparing images temp folder...")
+        settings_path = os.path.join(self._temp_folder, "displaysettings.json")
         if os.path.exists(settings_path):
-            with open(settings_path, 'r') as f:
+            with open(settings_path, "r") as f:
                 settings = json.load(f)
-                previous_rotate = settings.get('rotate', None)
-                previous_shift_x = settings.get('shift_x', None)
+                previous_rotate = settings.get("rotate", None)
+                previous_shift_x = settings.get("shift_x", None)
         else:
             previous_rotate = None
             previous_shift_x = None
 
         if self._shift_x != previous_shift_x or self._rotate != previous_rotate:
-            self._log.debug('Shift/rotate value changed or not found. Regenerating images...')
+            self._log.debug(
+                "Shift/rotate value changed or not found. Regenerating images..."
+            )
 
             # Clean up and generate new images
             if os.path.exists(self._temp_folder):
@@ -90,37 +104,46 @@ class DisplayManager(threading.Thread):
             self._generate_temporary_images()
 
             # Store new settings
-            with open(settings_path, 'w') as f:
-                json.dump({ 'rotate': self._rotate, 'shift_x': self._shift_x }, f)
+            with open(settings_path, "w") as f:
+                json.dump({"rotate": self._rotate, "shift_x": self._shift_x}, f)
         else:
-            self._log.debug('No change in shift/rotate value detected. Reusing existing images.')
+            self._log.debug(
+                "No change in shift/rotate value detected. Reusing existing images."
+            )
 
     def _generate_temporary_images(self):
-        self._log.debug('Generating temporary images...')
+        self._log.debug("Generating temporary images...")
         # Pre-process all images
         for emotion in self._VALID_EMOTIONS:
             self._log.debug(f"Processing images for emotion {emotion.value}")
             image_folder_path = os.path.join(self._assets_folder, emotion.value)
             temp_folder_path = os.path.join(self._temp_folder, emotion.value)
+
             os.makedirs(temp_folder_path, exist_ok=True)
 
-            image_files = sorted([f for f in os.listdir(image_folder_path) if f.endswith(".png")])
+            image_files = sorted(
+                [f for f in os.listdir(image_folder_path) if f.endswith(".png")]
+            )
 
             for image_file in image_files:
                 self._log.debug(f"Processing image {image_file} for emotion {emotion.value}")
                 temp_image_path = os.path.join(temp_folder_path, image_file)
                 image_path = os.path.join(image_folder_path, image_file)
-                image = Image.open(image_path)
 
-                # Rotate the image
-                if self._rotate != 0:
-                    image = image.rotate(self._rotate)
+                with Image.open(image_path) as image:
+                    processed_image = image
 
-                # Shift the image
-                if self._shift_x != 0:
-                    image = self._shift_and_wrap(image, self._shift_x)
+                    # Rotate the image
+                    if self._rotate != 0:
+                        processed_image = processed_image.rotate(self._rotate)
 
-                image.save(temp_image_path)
+                    # Shift the image
+                    if self._shift_x != 0:
+                        processed_image = self._shift_and_wrap(
+                            processed_image, self._shift_x
+                        )
+
+                    processed_image.save(temp_image_path)
 
     def _setup_display(self):
         # Configuration for CS and DC pins (these are PiTFT defaults):
@@ -167,7 +190,10 @@ class DisplayManager(threading.Thread):
                 image_folder_path = os.path.join(self._temp_folder, self._current_emotion.value)
                 image_files = sorted([f for f in os.listdir(image_folder_path) if f.endswith(".png")])
                 # Load all images into memory.
-                images = [Image.open(os.path.join(image_folder_path, image_file)) for image_file in image_files]
+                images = [
+                    Image.open(os.path.join(image_folder_path, image_file))
+                    for image_file in image_files
+                ]
                 last_emotion = self._current_emotion
 
             for image in images:
@@ -197,15 +223,24 @@ class DisplayManager(threading.Thread):
 
     def _display_pattern(self):
         # Create a new image with RGB mode
-        image = Image.new('RGB', (self._DISP_WIDTH, self._DISP_HEIGHT))
+        image = Image.new("RGB", (self._DISP_WIDTH, self._DISP_HEIGHT))
 
         # Get a drawing context
         draw = ImageDraw.Draw(image)
 
         # Draw three stripes
-        draw.rectangle([(0, 0), (self._DISP_WIDTH // 3, self._DISP_HEIGHT)], fill='red')
-        draw.rectangle([(self._DISP_WIDTH // 3, 0), (2 * self._DISP_WIDTH // 3, self._DISP_HEIGHT)], fill='green')
-        draw.rectangle([(2 * self._DISP_WIDTH // 3, 0), (self._DISP_WIDTH, self._DISP_HEIGHT)], fill='blue')
+        draw.rectangle([(0, 0), (self._DISP_WIDTH // 3, self._DISP_HEIGHT)], fill="red")
+        draw.rectangle(
+            [
+                (self._DISP_WIDTH // 3, 0),
+                (2 * self._DISP_WIDTH // 3, self._DISP_HEIGHT),
+            ],
+            fill="green",
+        )
+        draw.rectangle(
+            [(2 * self._DISP_WIDTH // 3, 0), (self._DISP_WIDTH, self._DISP_HEIGHT)],
+            fill="blue",
+        )
 
         # Display the pattern
         self.disp.image(image)
@@ -220,6 +255,12 @@ class DisplayManager(threading.Thread):
                 new_data[(x_new, y)] = data[((x_new - x) % image.size[0], y)]
 
         new_image = Image.new(image.mode, image.size)
-        new_image.putdata([new_data[(x, y)] for y in range(image.size[1]) for x in range(image.size[0])])
+        new_image.putdata(
+            [
+                new_data[(x, y)]
+                for y in range(image.size[1])
+                for x in range(image.size[0])
+            ]
+        )
 
         return new_image

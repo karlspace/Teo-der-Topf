@@ -34,6 +34,7 @@ class Application:
 
         self.display_manager = DisplayManager(self._log, frame_rate=10, frames_skip=5, assets_folder='assets/emotion', shift_x=-25, rotate=0)
         self.sensor_manager = SensorManager(bmp280_address=0x76, bh1750_address=0x23, ads1x15_address=0x48)
+        self.ha_client = None
 
     def start_application(self):
         if not self._app_thread_is_running:
@@ -55,6 +56,11 @@ class Application:
         if self._app_thread is not None:
             self._app_thread.join()
 
+        # Stop HomeAssistant Client
+        if self.ha_client is not None:
+            self.ha_client.stop()
+            self.ha_client = None
+
         # Stop sensors
         self.sensor_manager.stop()
 
@@ -71,13 +77,13 @@ class Application:
         # Telemetry
         if self._config.HOMEASSISTANT_ENABLED:
             self._log.info(f"Starting Telemetry for HomeAssistant using MQTT Server {self._config.HOMEASSISTANT_MQTT_SERVER}")
-            ha_client = HomeAssistantSensor(mqtt_server=self._config.HOMEASSISTANT_MQTT_SERVER,
-                                            ha_id=self._config.HOMEASSISTANT_ID,
-                                            sensor_manager=self.sensor_manager,
-                                            app_logger=self._log,
-                                            config=self._config,
-                                            username=self._config.HOMEASSISTANT_MQTT_USER,
-                                            password=self._config.HOMEASSISTANT_MQTT_PASSWORD)
+            self.ha_client = HomeAssistantSensor(mqtt_server=self._config.HOMEASSISTANT_MQTT_SERVER,
+                                                ha_id=self._config.HOMEASSISTANT_ID,
+                                                sensor_manager=self.sensor_manager,
+                                                app_logger=self._log,
+                                                config=self._config,
+                                                username=self._config.HOMEASSISTANT_MQTT_USER,
+                                                password=self._config.HOMEASSISTANT_MQTT_PASSWORD)
 
         # Application
         self._log.info("Starting Visualization...")
