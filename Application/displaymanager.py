@@ -12,6 +12,7 @@
 import os
 import time
 import threading
+from enum import Enum
 from PIL import Image, ImageDraw
 import shutil
 import json
@@ -23,7 +24,7 @@ from adafruit_rgb_display import ili9341
 from .applogger import ApplicationLogger
 
 
-class Emotions:
+class Emotions(Enum):
     FREEZE = "freeze"
     HAPPY = "happy"
     HOT = "hot"
@@ -31,21 +32,13 @@ class Emotions:
     SLEEPY = "sleepy"
     THIRSTY = "thirsty"
 
-
 class DisplayManager(threading.Thread):
     _BAUDRATE = 80000000
 
     _DISP_WIDTH = 320
     _DISP_HEIGHT = 240
 
-    _VALID_EMOTIONS = [
-        Emotions.FREEZE,
-        Emotions.HAPPY,
-        Emotions.HOT,
-        Emotions.SAVORY,
-        Emotions.SLEEPY,
-        Emotions.THIRSTY,
-    ]
+    _VALID_EMOTIONS = list(Emotions)
 
     def __init__(
         self,
@@ -122,9 +115,10 @@ class DisplayManager(threading.Thread):
         self._log.debug("Generating temporary images...")
         # Pre-process all images
         for emotion in self._VALID_EMOTIONS:
-            self._log.debug(f"Processing images for emotion {emotion}")
-            image_folder_path = os.path.join(self._assets_folder, emotion)
-            temp_folder_path = os.path.join(self._temp_folder, emotion)
+            self._log.debug(f"Processing images for emotion {emotion.value}")
+            image_folder_path = os.path.join(self._assets_folder, emotion.value)
+            temp_folder_path = os.path.join(self._temp_folder, emotion.value)
+
             os.makedirs(temp_folder_path, exist_ok=True)
 
             image_files = sorted(
@@ -132,7 +126,7 @@ class DisplayManager(threading.Thread):
             )
 
             for image_file in image_files:
-                self._log.debug(f"Processing image {image_file} for emotion {emotion}")
+                self._log.debug(f"Processing image {image_file} for emotion {emotion.value}")
                 temp_image_path = os.path.join(temp_folder_path, image_file)
                 image_path = os.path.join(image_folder_path, image_file)
 
@@ -169,13 +163,12 @@ class DisplayManager(threading.Thread):
             baudrate=self._BAUDRATE,
         )
 
-    def set_emotion(self, emotion):
+    def set_emotion(self, emotion: Emotions):
         if emotion in self._VALID_EMOTIONS:
             self._current_emotion = emotion
         else:
-            raise ValueError(
-                f"Invalid emotion: {emotion}. Valid emotions are: {self._VALID_EMOTIONS}"
-            )
+            valid = [e.value for e in self._VALID_EMOTIONS]
+            raise ValueError(f"Invalid emotion: {emotion}. Valid emotions are: {valid}")
 
     @property
     def current_emotion(self):
@@ -194,12 +187,8 @@ class DisplayManager(threading.Thread):
         while self._is_running:
             if last_emotion != self._current_emotion:
                 # Load the names of all pre-processed PNG images in the temp folder.
-                image_folder_path = os.path.join(
-                    self._temp_folder, self._current_emotion
-                )
-                image_files = sorted(
-                    [f for f in os.listdir(image_folder_path) if f.endswith(".png")]
-                )
+                image_folder_path = os.path.join(self._temp_folder, self._current_emotion.value)
+                image_files = sorted([f for f in os.listdir(image_folder_path) if f.endswith(".png")])
                 # Load all images into memory.
                 images = [
                     Image.open(os.path.join(image_folder_path, image_file))
